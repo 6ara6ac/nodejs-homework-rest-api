@@ -4,12 +4,13 @@ const gravatar = require('gravatar')
 const path = require('path')
 const fs = require('fs/promises')
 const Jimp = require("jimp");
+const {nanoid} = require("nanoid")
 
 
 const {User} = require("../models");
-const { HttpError, ctrlWrapper } = require('../helpers') 
+const { HttpError, ctrlWrapper, sendEmail } = require('../helpers') 
 
-const {SECRET_KEY} = process.env;
+const {SECRET_KEY, PROJECT_URL} = process.env;
 
 const avatarsDir = path.join(__dirname, '../',"public", "avatars")
 
@@ -22,9 +23,18 @@ const register = async(req, res) => {
     }
 
     const hashPassword = await bcrypt.hash(password, 10);
+    const verificationToken = nanoid()
     const avatarURL = gravatar.url(email)
 
-    const newUser = await User.create({...req.body, password: hashPassword, avatarURL})
+    const newUser = await User.create({...req.body, password: hashPassword, avatarURL, verificationToken})
+
+    const verifyEmail = {
+        to: email,
+        subject: "Verify email",
+        html: `<a target="blanc" href="${PROJECT_URL}/api/auth/verify/${verificationToken}">Click to verify your email</a>`
+    };
+
+    await sendEmail(verifyEmail)
 
     res.status(201).json({
         email: newUser.email,
@@ -32,11 +42,48 @@ const register = async(req, res) => {
     })
 }
 
+const verify = async(req,res) => {
+    const {verificationToken} = req.params;
+    const user = await User.findOne({verificationToken});
+    if(!user){
+        throw new HttpError(404);
+    }
+    
+    await User.findByIdAndUpdate(user._id, {verify: true, verificationToken: ""});
+
+    res.json({
+        message: "Verification successful"
+    })
+}
+
+const resendVerifyEmail = async(req,res) => {
+    const {email} = req.body;
+    const user = await User.findOne({email})
+    if(!user){
+        throw new HttpError(404);
+    }
+    if(user.verify){
+        throw new HttpError(400, "Verification has already been passed");
+    }
+
+    const verifyEmail = {
+        to: email,
+        subject: "Verify email",
+        html: `<a target="blanc" href="${PROJECT_URL}/api/auth/verify/${user.verificationToken}">Click to verify your email</a>`
+    };
+
+    await sendEmail(verifyEmail);
+
+    res.json({
+        message:"Verification email sent"
+    })
+}
+
 const login = async(req, res) => {
     const {email, password} = req.body;
     const user = await User.findOne({email})
-    if(!user){
-        throw HttpError (401, "Email or password invalid")
+    if(!user || !user.verify){
+        throw new HttpError (401, "Email or password invalid")
     }
     const passwordCompare = await bcrypt.compare(password, user.password)
     if(!passwordCompare){
@@ -76,7 +123,7 @@ const changeSubscription = async (req, res, next) => {
     const {id} = req.user
     const data = await User.findByIdAndUpdate(id, req.body)
     if (!data) {
-        throw new HttpError(404, "Not found");
+        throw new HttpError(404);
     }
     res.json(data);
   };
@@ -86,10 +133,6 @@ const changeSubscription = async (req, res, next) => {
     const {path: tempUpload, originalname} = req.file;
     const filename = `${_id}_${originalname}`;
     const resultUpload = path.join(avatarsDir, filename);
-
-    // await Jimp.read(tempUpload)
-    // .then(img => img.resize(250, 250).write(filename))
-    // .catch((err) => console.log(err));
 
     await Jimp.read(tempUpload)
     .then(img => img.resize(250, 250).write(tempUpload))
@@ -108,6 +151,8 @@ const changeSubscription = async (req, res, next) => {
 
 module.exports = {
     register: ctrlWrapper(register),
+    verify: ctrlWrapper(verify),
+    resendVerifyEmail: ctrlWrapper(resendVerifyEmail),
     login: ctrlWrapper(login),
     getCurrent: ctrlWrapper(getCurrent),
     logout: ctrlWrapper(logout),

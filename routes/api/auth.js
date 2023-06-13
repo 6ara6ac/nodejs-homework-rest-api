@@ -10,10 +10,16 @@ const schemas = require('../../schemas/schemas')
 
 const router = express.Router();
 
+// singup 
 router.post("/register", validateBody(schemas.registerSchema), ctrl.register);
 
 router.post("/login", validateBody(schemas.loginSchema), ctrl.login);
 
+router.get("/verify/:verificationToken", ctrl.verify)
+
+router.post("/verify", validateBody(schemas.emailSchema), ctrl.resendVerifyEmail)
+
+// singin
 router.get("/current",authenticate, ctrl.getCurrent)
 
 router.post("/logout", authenticate, ctrl.logout)
